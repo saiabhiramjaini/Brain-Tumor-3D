@@ -4,8 +4,6 @@ conda activate myenv
 
 conda install -c conda-forge streamlit nibabel numpy mayavi vtk
 
-conda install -c conda-forge streamlit nibabel numpy matplotlib
-
 python app.py
 
 conda deactivate
