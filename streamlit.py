@@ -1,123 +1,129 @@
 import streamlit as st
 import nibabel as nib
 import numpy as np
-from mayavi import mlab
+import plotly.graph_objs as go
 import tempfile
 import os
-from tvtk.api import tvtk
-from pyface.api import GUI
-
-# Configure Mayavi to use the Qt backend
-import vtk
-from mayavi.core.api import Engine
-from mayavi.core.off_screen_engine import OffScreenEngine
 
 def load_nifti(file_path):
     nifti_img = nib.load(file_path)
     return nifti_img.get_fdata()
 
-def save_visualization(mri_data, brain_threshold=0.1, tumor_threshold=0.6, brain_opacity=0.1):
-    # Create an off-screen engine
-    engine = OffScreenEngine()
-    engine.start()
+def normalize_data(data):
+    """Normalize data to 0-1 range with better handling of outliers"""
+    p1, p99 = np.percentile(data, (1, 99))
+    data_clip = np.clip(data, p1, p99)
+    return (data_clip - p1) / (p99 - p1)
+
+def visualize_3d_mri(mri_data):
+    # Normalize data with better outlier handling
+    mri_data = normalize_data(mri_data)
     
-    # Create a new scene
-    scene = engine.new_scene()
-    scene.scene.off_screen_rendering = True
+    # Fixed thresholds for brain and tumor
+    brain_threshold = 0.2
+    tumor_threshold = 0.6
     
-    # Normalize data
-    mri_data = mri_data / np.max(mri_data)
-    
-    # Create the visualization
+    # Create masks for brain and tumor
     brain_mask = (mri_data > brain_threshold) & (mri_data <= tumor_threshold)
-    x_brain, y_brain, z_brain = np.where(brain_mask)
-    
-    brain_pts = mlab.points3d(
-        x_brain, y_brain, z_brain, 
-        mri_data[x_brain, y_brain, z_brain],
-        mode="cube", colormap="bone", scale_factor=1,
-        opacity=brain_opacity, vmin=brain_threshold, vmax=tumor_threshold,
-        figure=scene.mayavi_scene
-    )
-    
     tumor_mask = mri_data > tumor_threshold
+    
+    # Get coordinates for brain and tumor
+    x_brain, y_brain, z_brain = np.where(brain_mask)
     x_tumor, y_tumor, z_tumor = np.where(tumor_mask)
     
-    if len(x_tumor) > 0:
-        tumor_pts = mlab.points3d(
-            x_tumor, y_tumor, z_tumor,
-            mri_data[x_tumor, y_tumor, z_tumor],
-            mode="cube", colormap="hot", scale_factor=1,
-            opacity=1.0, vmin=tumor_threshold, vmax=1.0,
-            figure=scene.mayavi_scene
+    scale = 1.0 
+    
+    # Create 3D scatter plots
+    brain_scatter = go.Scatter3d(
+        x=x_brain * scale,
+        y=y_brain * scale,
+        z=z_brain * scale,
+        mode="markers",
+        marker=dict(
+            size=4, 
+            color="lightblue",
+            opacity=0.3,
+            line=dict(width=0)
+        ),
+        name="Brain Tissue"
+    )
+    
+    tumor_scatter = go.Scatter3d(
+        x=x_tumor * scale,
+        y=y_tumor * scale,
+        z=z_tumor * scale,
+        mode="markers",
+        marker=dict(
+            size=0.1,  
+            color="rgba(255, 255, 255, 0.5)", 
+            opacity=0, 
+            line=dict(width=0)
+        ),
+        name=" "
+    )
+    
+    # Create layout with better camera angle and larger initial view
+    layout = go.Layout(
+        scene=dict(
+            xaxis=dict(title="X"),
+            yaxis=dict(title="Y"),
+            zaxis=dict(title="Z"),
+            camera=dict(
+                up=dict(x=0, y=0, z=1),
+                center=dict(x=0, y=0, z=0),
+                eye=dict(x=1.5, y=1.5, z=1.5) 
+            ),
+            aspectmode='data'
+        ),
+        margin=dict(l=0, r=0, b=0, t=0),
+        showlegend=True,
+        legend=dict(
+            x=0.7,
+            y=0.9,
+            bgcolor="rgba(255, 255, 255, 0.5)"
         )
+    )
     
-    # Save the visualization
-    temp_dir = tempfile.mkdtemp()
-    output_path = os.path.join(temp_dir, 'visualization.png')
-    scene.scene.save(output_path)
+    fig = go.Figure(data=[brain_scatter, tumor_scatter], layout=layout)
     
-    # Clean up
-    engine.stop()
-    return output_path
-
-st.set_page_config(page_title="3D Brain MRI Visualizer", layout="wide")
-st.title("🧠 3D Brain MRI Visualizer")
-
-# Add description
-st.markdown("""
-This app allows you to visualize 3D brain MRI data. Upload a NIFTI (.nii) file and adjust the visualization parameters.
-- **Brain Threshold**: Controls the minimum intensity value for brain tissue visualization
-- **Tumor Threshold**: Controls the threshold for potential tumor visualization
-- **Brain Opacity**: Adjusts the transparency of brain tissue
-""")
-
-uploaded_file = st.file_uploader("Upload a .nii file", type=["nii"])
-
-if uploaded_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".nii") as temp_file:
-        temp_file.write(uploaded_file.read())
-        temp_path = temp_file.name
+    # Update the scene range to ensure proper initial scaling
+    max_range = max(
+        max(x_brain * scale) - min(x_brain * scale),
+        max(y_brain * scale) - min(y_brain * scale),
+        max(z_brain * scale) - min(z_brain * scale)
+    )
     
-    st.success("File uploaded successfully!")
+    fig.update_layout(
+        scene=dict(
+            aspectratio=dict(x=1, y=1, z=1),
+            aspectmode='manual',
+            xaxis=dict(range=[-max_range/2, max_range/2]),
+            yaxis=dict(range=[-max_range/2, max_range/2]),
+            zaxis=dict(range=[-max_range/2, max_range/2])
+        )
+    )
     
-    try:
-        mri_data = load_nifti(temp_path)
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            brain_threshold = st.slider("Brain Threshold", 0.01, 1.0, 0.1, 0.01)
-        with col2:
-            tumor_threshold = st.slider("Tumor Threshold", 0.1, 1.0, 0.6, 0.01)
-        with col3:
-            brain_opacity = st.slider("Brain Opacity", 0.01, 1.0, 0.1, 0.01)
-        
-        if st.button("Generate Visualization"):
-            with st.spinner("Generating 3D visualization..."):
-                try:
-                    output_path = save_visualization(
-                        mri_data, 
-                        brain_threshold, 
-                        tumor_threshold, 
-                        brain_opacity
-                    )
-                    st.image(output_path, caption="3D Brain MRI Visualization")
-                    os.remove(output_path)
-                except Exception as e:
-                    st.error(f"Error generating visualization: {str(e)}")
-        
-    except Exception as e:
-        st.error(f"Error loading NIFTI file: {str(e)}")
+    return fig
+
+def main():
+    st.title("3D Brain Visualization")
     
-    os.remove(temp_path)
+    uploaded_file = st.file_uploader("Upload a NIfTI file", type=["nii"])
+    
+    if uploaded_file is not None:
+        with st.spinner("Loading NIfTI file..."):
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".nii") as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                file_path = tmp_file.name
+            
+            mri_data = load_nifti(file_path)
+            
+            if st.button("Visualize"):
+                with st.spinner("Generating 3D visualization..."):
+                    fig = visualize_3d_mri(mri_data)
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            os.unlink(file_path)
 
-st.sidebar.markdown("""
-### Instructions
-1. Upload a NIFTI (.nii) file
-2. Adjust the visualization parameters
-3. Click 'Generate Visualization' to view the results
-
-### About
-This app uses Mayavi for 3D visualization of brain MRI data. It can help identify and visualize brain structures and potential abnormalities.
-""")
+if __name__ == "__main__":
+    main()
