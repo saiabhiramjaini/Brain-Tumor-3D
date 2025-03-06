@@ -1,9 +1,17 @@
-conda create -n myenv python=3.10
+for setting up:
 
-conda activate myenv
+    1. python -m venv venv
 
-conda install -c conda-forge streamlit nibabel numpy mayavi vtk
+    2. for mac users: source venv/bin/activate
+       for windows users: venv\Scripts\activate
 
-python app.py
+    3. pip install -r requirements.txt
 
-conda deactivate
+To run: 
+
+    1. for mac users: source venv/bin/activate
+       for windows users: venv\Scripts\activate
+
+    2. streamlit run app.py
+
+To deactivate the virtual environment: deactivate
